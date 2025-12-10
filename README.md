@@ -1,5 +1,3 @@
----
-
 # **Kafka Sorting Pipeline (Golang)**
 
 This project implements a **high-performance data generation and sorting pipeline** in Golang.
