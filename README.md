@@ -331,14 +331,3 @@ South America
   * Producer batch size
   * Compression settings
   * Heap memory limits (Kafka JVM)
-
----
-
-If you'd like, I can also generate:
-
-* A **high-level architecture diagram image**
-* A **PDF version** of this documentation
-* A **simplified README for interview submission**
-* A **professional GitHub landing page**
-
-Just tell me what you want next.
