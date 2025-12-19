@@ -125,7 +125,7 @@ High-level workflow:
 
 ## **Streaming Mode Architecture**
 
-``mermaid
+```mermaid
 graph TD
     A[Kafka Source Topic] --> B[Partition 0 Consumer]
     A --> C[Partition 1 Consumer]
@@ -181,7 +181,7 @@ In streaming mode:
 
 ## **Detailed External Sort Architecture**
 
-``mermaid
+```mermaid
 graph LR
     A[Source CSV File] --> B[Chunk Reader]
     B --> C[Memory Buffer 1]
