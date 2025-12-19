@@ -1,37 +1,30 @@
-# Kafka Sorting Pipeline (Golang)
+# **Kafka Sorting Pipeline (Golang)**
 
-This project implements a **data generation and processing pipeline** in Golang:
+This project implements a **high-performance data generation and sorting pipeline** in Golang.
 
-1. Generate **50 million** random CSV records following the required schema.
-2. Produce them to a Kafka topic `source`.
-3. Consume all records from `source` into a flat file (for efficient local processing).
-4. Perform **external sort** (chunked + k-way merge) of the data by:
-   - `id` (numeric)
-   - `name` (alphabetical)
-   - `continent` (alphabetical)
-5. For each sort order, stream the globally sorted sequence back to Kafka into
-   three topics: `id`, `name`, `continent`.
+The pipeline:
 
 The code is structured for **performance**, **memory efficiency**, **fault tolerance**, and **clarity**.
 
 ---
 
-## Schema
+## **Schema**
 
-Each record has the following fields:
+Each generated record contains four fields:
 
-- `id` (int32): integer within 32-bit range.
-- `name` (string): English letters only, length in `[10, 15]`.
-- `address` (string): mixture of letters, digits, and spaces, length in `[15, 20]` (no commas).
-- `continent` (string): one of:
-  - `North America`
-  - `Asia`
-  - `South America`
-  - `Europe`
-  - `Africa`
-  - `Australia`
+* **id** (`int32`): random 32-bit integer
+* **name** (`string`): lowercase English letters, length **10–15**
+* **address** (`string`): alphanumeric + space, length **15–20**, **no commas**
+* **continent** (`string`): one of
 
-CSV examples:
+  * North America
+  * Asia
+  * South America
+  * Europe
+  * Africa
+  * Australia
+
+Example CSV rows:
 
 ```text
 21,axxxxxxxxx,12 abc dfsf LdUE,Asia
@@ -40,9 +33,9 @@ CSV examples:
 
 ---
 
-## Architecture Overview
+## **Architecture Overview**
 
-High-level flow:
+High-level workflow:
 
 1. **Generator + Producer (Go + kafka-go)**
    - Uses a random generator that strictly respects the schema.
@@ -56,20 +49,25 @@ High-level flow:
      from Kafka multiple times.
    - Supports offset management through consumer groups for fault tolerance.
 
-3. **External Sort (per key) + Producer**
-   For each key (`id`, `name`, `continent`):
+2. **Consumer → Local Flat File**
 
-   a. **Chunk Sorting Phase**
-   - Stream through `source.csv`, accumulating up to `chunkSize` records in memory.
-   - Sort the in-memory chunk using `sort.Slice` with a key-specific comparator.
-   - Write the sorted chunk to a temporary file under a dedicated chunk directory.
+   * Reads exactly `RECORDS` messages from Kafka
+   * Writes them into `/tmp/pipeline-data/source.csv`
 
-   b. **K-way Merge Phase**
-   - Open all chunk files.
-   - Use a min-heap (priority queue) keyed by the sort key to perform a k-way merge.
-   - As we pop the smallest record from the heap, we immediately send it as a Kafka
-     message to the corresponding output topic (`id`, `name`, or `continent`).
-   - This ensures we never hold the entire dataset in RAM at once.
+3. **External Sort Pipeline**
+   For each sort key (`id`, `name`, `continent`):
+
+   **Chunk Phase:**
+
+   * Read `chunkSize` records into memory
+   * Sort in-memory chunk
+   * Write sorted chunk to disk
+
+   **K-Way Merge Phase:**
+
+   * Open all sorted chunk files
+   * Merge using a min-heap keyed by the sort column
+   * Stream the merged result directly to a Kafka output topic
 
 4. **Real-time Streaming Mode**
    - Alternative streaming mode processes data in real-time with partition-aware processing.
@@ -110,17 +108,16 @@ High-level flow:
 
 ---
 
-## Algorithms and Design Choices
+## **Algorithms and Design Choices**
 
-### Random Data Generation
+### **Random Data Generation**
 
-- The generator uses `math/rand` with a per-process seed.
-- `id` is generated as `int32(rand.Int31())`.
-- `name` is generated with lowercase letters `[a-z]`, length `[10, 15]`.
-- `address` uses characters `[a-zA-Z0-9 ]`, length `[15, 20]`. Commas are explicitly avoided so the CSV can be parsed with a simple split.
-- `continent` is randomly chosen from the six allowed values.
+* Efficient UTF-8-safe string builder
+* No commas → simple CSV parsing
+* Uniform distribution of continents
+* ID is generated via `rand.Int31()`
 
-### Kafka IO
+### **Kafka IO**
 
 - Uses the pure-Go `github.com/segmentio/kafka-go` client.
 - Producer:
@@ -131,38 +128,44 @@ High-level flow:
   - Supports both sequential reading and consumer group-based offset management.
   - Configurable buffer sizes for optimal throughput.
 
-### External Sort
+  * Batch size: 10,000
+  * Snappy compression
+  * RequiredAcks=0 (fastest possible)
+* Consumer:
 
-Given 50M records and a strict memory budget (2GB including Kafka), a naive in-memory sort is not safe.
+  * No offset commits
+  * Deterministic sequential read
 
-We implement:
+### **External Sort**
 
-1. **Chunk Sorting:**
-   - Read up to `chunkSize` (e.g., 2,000,000) records into memory.
-   - Sort the slice with `sort.Slice`.
-   - Write a sorted chunk to disk.
+Since 50M rows cannot fit in 2GB RAM → **external merge sort**.
+
+1. **Chunk Sort:**
+
+   * Sort <2M rows at a time
+   * Safe bounded memory usage
 
 2. **K-way Merge:**
-   - Maintain a min-heap where each element is the current head record of a chunk file.
-   - Repeatedly pop the smallest record and push the next record from that chunk.
-   - Stream the merged output directly into Kafka as messages.
 
-This is a standard external merge sort pattern and scales beyond what fits in RAM.
+   * Heap holds only 1 row per chunk
+   * Output streamed sequentially to Kafka
+
+This is the same algorithm used by modern databases and distributed systems.
 
 ---
 
-## Project Layout
+## **Project Layout**
 
 ```text
 kafka-sorting-pipeline/
   cmd/
     pipeline/
-      main.go           # Orchestrates the whole pipeline
+      main.go           # Orchestrates full pipeline
   internal/
     data/
-      record.go         # Record definition, CSV encode/decode, random generator
+      record.go         # Record struct, random generator, CSV encode/decode
     kafkautil/
-      kafka.go          # Kafka reader/writer helpers
+      kafka.go          # Kafka reader/writer helper functions
     sorter/
       external_sort.go  # External sort implementation (chunk + k-way merge)
     streaming/
@@ -171,8 +174,8 @@ kafka-sorting-pipeline/
       metrics.go        # Metrics collection and reporting
   scripts/
     build.sh            # Build Docker image
-    run.sh              # Example how to run the container
-    start.sh            # Entry-point inside the container
+    run.sh              # Example usage
+    start.sh            # Entry point inside pipeline container
   Dockerfile
   go.mod
   README.md
@@ -180,80 +183,53 @@ kafka-sorting-pipeline/
 
 ---
 
-## Building the Docker Image
+## **Building the Docker Image**
 
-Prerequisites on the host:
+### **Prerequisites**
 
-- Docker (with at least 2GB memory and 4 cores allocated to Docker)
-- A Kafka cluster (Dockerized example below)
+* Docker
+* Kafka cluster (e.g., via docker-compose)
+* Minimum 2GB RAM + 4 CPU cores allocated to Docker
 
-Build the image:
+### **Build**
 
 ```bash
 cd kafka-sorting-pipeline
 ./scripts/build.sh
-# or:
-IMAGE_NAME=myuser/kafka-sorting-pipeline IMAGE_TAG=latest ./scripts/build.sh
 ```
+
+This creates the Docker image:
+
+```
+kafka-sorting-pipeline:latest
+```
+
+The script will print a **ready-to-use `docker run` command**.
 
 ---
 
-## Running with Docker + Kafka
+## **Running the Pipeline**
 
-You need a Kafka broker reachable from the container. A minimal `docker-compose.yaml` example:
-
-```yaml
-version: "3.8"
-
-services:
-  zookeeper:
-    image: bitnami/zookeeper:latest
-    environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-    ports:
-      - "2181:2181"
-    mem_limit: 256m
-
-  kafka:
-    image: bitnami/kafka:latest
-    ports:
-      - "9092:9092"
-    environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-    depends_on:
-      - zookeeper
-    mem_limit: 1g
-
-  pipeline:
-    image: kafka-sorting-pipeline:latest
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - RECORDS=50000000        # Adjust for testing
-      - CHUNK_SIZE=2000000      # Adjust to control memory usage
-    depends_on:
-      - kafka
-    mem_limit: 512m
-    cpus: "4.0"
-```
-
-Run:
+Start Kafka (example: via docker-compose), then run the printed command:
 
 ```bash
-docker-compose up --build
+docker run --rm \
+  --network=<your-docker-network> \
+  -e KAFKA_BROKER=kafka:9092 \
+  -e RECORDS=50000000 \
+  -e CHUNK_SIZE=2000000 \
+  kafka-sorting-pipeline:latest
 ```
 
-The `pipeline` container will:
+This will:
 
-1. Wait until `kafka:9092` is reachable.
-2. Generate and send the configured number of records to `source`.
-3. Consume them into `/tmp/pipeline-data/source.csv`.
-4. Sort and write results to Kafka topics `id`, `name`, `continent`.
-5. Print timing breakdowns to stdout.
+1. Wait for Kafka
+2. Generate N records
+3. Produce to topic `source`
+4. Consume to `/tmp/pipeline-data/source.csv`
+5. Perform all three sorts
+6. Produce sorted results
+7. Print detailed timing metrics
 
 ### Streaming Mode
 
@@ -271,39 +247,13 @@ In streaming mode:
 
 ---
 
-## Verifying Correctness
+# **How to Verify the Pipeline Functionality**
 
-Inside or outside the Docker network, you can verify:
-
-1. **Record Counts**
-
-   Each output topic (`id`, `name`, `continent`) should contain exactly the same
-   number of messages as `source`.
-
-   Example using `kafka-console-consumer` or any Kafka client of your choice.
-
-2. **Order by Key**
-
-   - For `id` topic:
-     - Scan messages sequentially and ensure each `id` is `>=` the previous `id`.
-   - For `name` topic:
-     - Ensure lexical order of `name`, with `id` as a tie-breaker.
-   - For `continent` topic:
-     - Ensure lexical order of `continent`, with `id` as a tie-breaker.
-
-   For quick sanity checks, you can consume the first N messages from each topic
-   and visually inspect them.
-
-3. **Schema Validation**
-
-   - Ensure every line has exactly four comma-separated fields.
-   - Validate field constraints (lengths, allowed characters, continent values).
-
-For development/testing, you can reduce `RECORDS` to a smaller number (e.g., `100000`) to speed things up and validate behavior.
+Follow the steps below to validate correctness and performance.
 
 ---
 
-## Performance and Optimizations
+## **1. Build the Docker image**
 
 ### What is Optimized
 
@@ -333,32 +283,24 @@ For large data volumes (50M rows), the main bottlenecks are:
 
 ---
 
-## Scaling Further: More Data, More Machines
+## **2. Copy the generated Docker run command**
 
-If we had more data (e.g., billions of rows) and more machines:
+The build script prints something like:
 
-1. **Partitioned Sorting**
-   - Partition input data by key range or hash across multiple nodes.
-   - Each node performs an external sort for its partition.
-   - The global sorted order is obtained by concatenating the sorted partitions.
+```bash
+docker run --rm \
+  --network=<your-docker-network> \
+  -e KAFKA_BROKER=kafka:9092 \
+  -e RECORDS=50000000 \
+  -e CHUNK_SIZE=2000000 \
+  kafka-sorting-pipeline:latest
+```
 
-2. **Kafka Partitions**
-   - Use many partitions per topic, each processed by separate instances of the sorter service.
-   - Each instance performs local external sorting; combine results if a fully global order is required.
-
-3. **Distributed Filesystem**
-   - Use a distributed filesystem (e.g., HDFS, S3) to store chunk files.
-   - This allows horizontal scaling of storage and IO bandwidth.
-
-4. **Binary Format Instead of CSV**
-   - Switch to a compact binary format (e.g., Protobuf / Avro) to reduce serialization overhead and network usage.
-
-5. **Streaming Frameworks**
-   - Integrate with Apache Flink / Kafka Streams for built-in windowed and partitioned sorting, if exact global order is not strictly required.
+Copy it.
 
 ---
 
-## Notes
+## **3. Execute the command (modify if needed)**
 
 - This repository is designed to be self-contained for the Golang app and its Docker image.
 - The Kafka cluster is expected to be provided by the environment (e.g., via `docker-compose` as shown above).
