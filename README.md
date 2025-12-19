@@ -10,7 +10,7 @@ The code is structured for **performance**, **memory efficiency**, **fault toler
 
 ## **Pipeline Architecture Diagram**
 
-``mermaid
+```mermaid
 graph TD
     A[Data Generator] --> B[Kafka Producer]
     B --> C[Source Topic]
