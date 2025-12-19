@@ -37,6 +37,33 @@ func (k SortKey) String() string {
 	}
 }
 
+// SortRecordsByID sorts a slice of records by ID in-place
+func SortRecordsByID(records []data.Record) {
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].ID < records[j].ID
+	})
+}
+
+// SortRecordsByName sorts a slice of records by name in-place
+func SortRecordsByName(records []data.Record) {
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Name == records[j].Name {
+			return records[i].ID < records[j].ID
+		}
+		return records[i].Name < records[j].Name
+	})
+}
+
+// SortRecordsByContinent sorts a slice of records by continent in-place
+func SortRecordsByContinent(records []data.Record) {
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Continent == records[j].Continent {
+			return records[i].ID < records[j].ID
+		}
+		return records[i].Continent < records[j].Continent
+	})
+}
+
 // ExternalSortAndProduce performs an external sort over srcFile by key and writes the
 // sorted result directly to Kafka via the provided writer.
 func ExternalSortAndProduce(
@@ -46,7 +73,6 @@ func ExternalSortAndProduce(
 	chunkSize int,
 	key SortKey,
 	writer *kafka.Writer,
-	outputFile string,
 ) error {
 	// Phase 1: split into sorted chunks.
 	chunkFiles, err := createSortedChunks(srcFile, tmpDir, chunkSize, key)

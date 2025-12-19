@@ -12,7 +12,7 @@ This project implements a **data generation and processing pipeline** in Golang:
 5. For each sort order, stream the globally sorted sequence back to Kafka into
    three topics: `id`, `name`, `continent`.
 
-The code is structured for **performance**, **memory efficiency**, and **clarity**.
+The code is structured for **performance**, **memory efficiency**, **fault tolerance**, and **clarity**.
 
 ---
 
@@ -47,12 +47,14 @@ High-level flow:
 1. **Generator + Producer (Go + kafka-go)**
    - Uses a random generator that strictly respects the schema.
    - Streams records in batches (10k messages) into Kafka topic `source`.
+   - Supports configurable retry mechanisms with exponential backoff.
 
 2. **Consumer → Flat File**
    - A dedicated consumer reads exactly N records from `source` and writes
-     them to a local file `source.csv` in the container’s filesystem.
+     them to a local file `source.csv` in the container's filesystem.
    - Using a flat file decouples Kafka IO from sorting and avoids re-reading
      from Kafka multiple times.
+   - Supports offset management through consumer groups for fault tolerance.
 
 3. **External Sort (per key) + Producer**
    For each key (`id`, `name`, `continent`):
@@ -69,12 +71,42 @@ High-level flow:
      message to the corresponding output topic (`id`, `name`, or `continent`).
    - This ensures we never hold the entire dataset in RAM at once.
 
-4. **Runtime Reporting**
+4. **Real-time Streaming Mode**
+   - Alternative streaming mode processes data in real-time with partition-aware processing.
+   - Supports horizontal scaling through concurrent partition processing.
+   - Processes data as it arrives rather than in batch mode.
+
+5. **Runtime Reporting**
    - The pipeline measures and prints wall-clock time for:
      - Data generation + production
      - Consumption into file
      - Sort + produce (each key)
      - Overall runtime
+   - Comprehensive metrics collection for monitoring and observability.
+
+---
+
+## Enhanced Features
+
+### Fault Tolerance and Resilience
+- **Offset Management**: Consumer groups for automatic offset tracking and recovery.
+- **Retry Mechanisms**: Exponential backoff retry logic for all Kafka operations.
+- **Graceful Shutdown**: Proper cleanup and resource management on interruption.
+
+### Observability
+- **Structured Logging**: Detailed logging with timestamps for debugging and monitoring.
+- **Metrics Collection**: Comprehensive metrics for generation, consumption, sorting, and production.
+- **Progress Tracking**: Periodic progress reports during long-running operations.
+
+### Scalability
+- **Partition-Aware Processing**: Concurrent processing of Kafka partitions for horizontal scaling.
+- **Configurable Concurrency**: Adjustable concurrency levels for optimal resource utilization.
+- **Memory Efficiency**: Controlled memory usage through chunked processing.
+
+### Real-time Processing
+- **Streaming Mode**: Process data in real-time as it arrives in Kafka topics.
+- **Continuous Operation**: Run indefinitely, processing new data as it becomes available.
+- **Partition-Level Parallelism**: Each Kafka partition processed by a dedicated goroutine.
 
 ---
 
@@ -94,8 +126,10 @@ High-level flow:
 - Producer:
   - Batches of 10,000 messages to reduce overhead.
   - Snappy compression enabled.
+  - Configurable acknowledgment levels.
 - Consumer:
-  - Reads sequentially without committing offsets; the pipeline is one-shot and deterministic.
+  - Supports both sequential reading and consumer group-based offset management.
+  - Configurable buffer sizes for optimal throughput.
 
 ### External Sort
 
@@ -131,6 +165,10 @@ kafka-sorting-pipeline/
       kafka.go          # Kafka reader/writer helpers
     sorter/
       external_sort.go  # External sort implementation (chunk + k-way merge)
+    streaming/
+      processor.go      # Real-time streaming processor with partition awareness
+    metrics/
+      metrics.go        # Metrics collection and reporting
   scripts/
     build.sh            # Build Docker image
     run.sh              # Example how to run the container
@@ -217,6 +255,20 @@ The `pipeline` container will:
 4. Sort and write results to Kafka topics `id`, `name`, `continent`.
 5. Print timing breakdowns to stdout.
 
+### Streaming Mode
+
+To run in real-time streaming mode:
+
+```bash
+docker-compose run --rm pipeline -streaming=true -concurrency=4
+```
+
+In streaming mode:
+- The pipeline continuously processes data from Kafka topics
+- Each partition is processed by a separate goroutine
+- Data is sorted and produced in real-time as it arrives
+- Supports graceful shutdown with Ctrl+C
+
 ---
 
 ## Verifying Correctness
@@ -263,6 +315,10 @@ For development/testing, you can reduce `RECORDS` to a smaller number (e.g., `10
   - Memory bound is controlled by `CHUNK_SIZE`. You can tune it based on the available memory.
 - **Heap-based Merge**
   - K-way merge uses a minimal comparison per record per chunk, which is optimal for large sorted runs.
+- **Retry Logic**
+  - Exponential backoff for transient failures improves reliability.
+- **Partition-Level Parallelism**
+  - Concurrent processing of Kafka partitions maximizes throughput.
 
 ### Where the Major Bottlenecks Are
 
@@ -310,4 +366,4 @@ If we had more data (e.g., billions of rows) and more machines:
   - `RECORDS` (number of generated records),
   - `CHUNK_SIZE` (records per in-memory chunk),
   - Kafka batch and buffer sizes (by editing `internal/kafkautil/kafka.go`).
-
+- The streaming mode provides real-time processing capabilities for continuous data flows.

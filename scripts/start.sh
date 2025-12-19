@@ -20,6 +20,10 @@ echo "Records         : ${RECORDS}"
 echo "Chunk size      : ${CHUNK_SIZE}"
 echo "Workdir         : ${WORKDIR}"
 
+# Add a small delay to ensure Kafka is fully ready
+echo "Waiting for Kafka to be fully ready..."
+sleep 5
+
 exec /app/pipeline \
   -broker="${BROKER}" \
   -source-topic="${SOURCE_TOPIC}" \

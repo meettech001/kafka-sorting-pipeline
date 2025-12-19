@@ -20,18 +20,67 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     mem_limit: 1g
     volumes:
       - ./scripts/tests:/tests
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - kafka
+    volumes:
+      - ./scripts/init-kafka.sh:/init-kafka.sh
+    command: ["/init-kafka.sh"]
 
   pipeline:
     build: .
     image: kafka-sorting-pipeline:latest
     depends_on:
-      - kafka
+      - kafka-init
     environment:
       KAFKA_BROKER: kafka:9092
-      RECORDS: 50000000
-      CHUNK_SIZE: 2000000
+      RECORDS: 1000000
+      CHUNK_SIZE: 100000
     mem_limit: 512m
     cpus: "4.0"
+    volumes:
+      - ./prometheus-data:/app/prometheus-data
+    ports:
+      - "8080:8080"
+    command: ["/app/pipeline", "-streaming=true", "-records=0", "-concurrency=2", "-chunk-size=10000", "-metrics-port=:8080"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    depends_on:
+      - pipeline
+
+  grafana:
+    image: grafana/grafana-enterprise
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:
